@@ -6,11 +6,13 @@ License: AGPL-3.0-only.
 
 import subprocess
 import sys
+import threading
 
 # Shared configuration lives with package data; source checkouts import locally.
 if __file__.startswith('/usr/bin/'):
     sys.path.insert(0, '/usr/lib/mx-touchpad-gestures')
 from mxmaster3_gesture_config import GestureSettings, read_settings, write_settings
+from mxmaster3_gesture_setup import setup_and_start, needs_initial_setup
 
 try:
     import gi
@@ -46,6 +48,7 @@ class Preferences(Gtk.Application):
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.window = None
         self.mouse_settings = None
+        self._setup_busy = False
 
     def do_activate(self):
         if self.window is not None:
@@ -124,6 +127,10 @@ class Preferences(Gtk.Application):
         self.status.set_xalign(0)
         self.status.set_wrap(True)
         footer.append(self.status)
+        self.repair_button = Gtk.Button(label='Repair Solaar connection')
+        self.repair_button.set_tooltip_text('Reinstall the button rules, set diversion and start the driver')
+        self.repair_button.connect('clicked', self._repair)
+        footer.append(self.repair_button)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         footer.append(actions)
         self.daemon_button = Gtk.Button(label='')
@@ -143,6 +150,9 @@ class Preferences(Gtk.Application):
         self._load_values(read_settings())
         self._refresh_service()
         self.window.present()
+        # On first launch, configure and start automatically in the user session.
+        if needs_initial_setup() and not service_active():
+            GLib.idle_add(self._begin_setup)
 
     @staticmethod
     def _text(container, value, style=None):
@@ -216,11 +226,44 @@ class Preferences(Gtk.Application):
     def _refresh_service(self):
         self.daemon_button.set_label('Stop gestures' if service_active() else 'Start gestures')
 
+    def _repair(self, *_args):
+        self._begin_setup()
+
+    def _begin_setup(self):
+        if self._setup_busy:
+            return False
+        self._setup_busy = True
+        self.daemon_button.set_sensitive(False)
+        self.repair_button.set_sensitive(False)
+        self.status.set_text('Connecting Solaar and starting gestures…')
+        self.hold()
+
+        def worker():
+            try:
+                message = setup_and_start()
+            except (OSError, RuntimeError) as exc:
+                message = 'Connection setup failed: ' + str(exc)
+            GLib.idle_add(self._setup_finished, message)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return False
+
+    def _setup_finished(self, message):
+        self._setup_busy = False
+        self.daemon_button.set_sensitive(True)
+        self.repair_button.set_sensitive(True)
+        self.status.set_text(message)
+        self._refresh_service()
+        self.release()
+        return False
+
     def _toggle_service(self, *_args):
-        action = 'stop' if service_active() else 'start'
+        if not service_active():
+            self._begin_setup()
+            return
         try:
-            service_action(action)
-            self.status.set_text('Gestures ' + ('stopped.' if action == 'stop' else 'started.'))
+            service_action('stop')
+            self.status.set_text('Gestures stopped.')
         except RuntimeError as exc:
             self.status.set_text(str(exc))
         self._refresh_service()
