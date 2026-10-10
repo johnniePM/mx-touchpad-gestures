@@ -16,7 +16,7 @@ After installing, open **MX Touchpad Gestures Settings** in GNOME Activities. On
 
 The **MX Master 3 Gestures** start/stop launcher also configures Solaar when starting gestures. If the thumb button stops responding, select **Repair Solaar connection** in Settings. No terminal setup command or manual Solaar restart is required.
 
-Solaar is optional if the gesture button is available directly through Linux evdev. For Logitech HID++ diversion, install Solaar with `sudo pacman -S solaar`. Connection failures appear in Settings; the repair action can be retried. Unrelated Solaar rules are preserved.
+Solaar is installed automatically as an Arch dependency. The application uses it to configure the selected MX Master gesture button. Connection failures appear in Settings and can be retried with **Repair Solaar connection**. Unrelated Solaar rules are preserved.
 
 ## Choose your mouse
 
