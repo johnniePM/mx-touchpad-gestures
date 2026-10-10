@@ -20,13 +20,13 @@ Solaar is installed automatically as an Arch dependency. The application uses it
 
 ## Choose your mouse
 
-In **MX Touchpad Gestures Settings**, the **Connected mouse** section lists available MX Master 3 and MX Master 3S devices with their Solaar serial numbers. Choose your mouse and select **Save and apply**, **Start gestures**, or **Repair Solaar connection**. Use **Refresh connected mice** after connecting a mouse while Settings is open.
+In **MX Touchpad Gestures Settings**, the **Connected mouse** section lists available MX Master 3 and MX Master 3S devices with their Solaar serial numbers (or Unit IDs when serials are unavailable). Choose your mouse and select **Save and apply**, **Start gestures**, or **Repair Solaar connection**. Use **Refresh connected mice** after connecting a mouse while Settings is open.
 
 The application sets **Key/Button Diversion → Mouse Gesture Button → Diverted** via Solaar's device API. It changes only the gesture button—not the middle button, other button assignments, or your DPI. Solaar is automatically installed as an Arch dependency.
 
 The selected mouse is saved in `~/.config/mx-touchpad-gestures/device.json`. A user-session reconnect monitor periodically verifies diversion and restores it if Solaar or the mouse resets the setting. It can restart a gesture service that stopped during a disconnect, but it stops itself when you deliberately stop gestures.
 
-For multiple identical MX Master mice, the selection chooses which Solaar device to configure by serial. The Linux evdev motion device is selected separately. If automatic motion-device selection is ambiguous, set `MXG_MOUSE=/dev/input/eventN` in `~/.config/mxmaster3-gestures.conf`.
+For multiple identical MX Master mice, the selection uses a serial number when available or a Unit ID for mouse identity. For a mouse without a serial, Solaar CLI addresses it by name; if several identical serial-less mice are connected, the app refuses to change a potentially wrong device. The Linux evdev motion device is selected separately. If automatic motion-device selection is ambiguous, set `MXG_MOUSE=/dev/input/eventN` in `~/.config/mxmaster3-gestures.conf`.
 
 ## Open Settings
 

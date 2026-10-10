@@ -83,7 +83,10 @@ class MouseTests(TestCase):
         with patch.object(d,'run',side_effect=[
              result(out='divert-keys = {Mouse Gesture Button:Regular}'),
              result(out='Changed'),
-             result(out='divert-keys = {Mouse Gesture Button:Regular}')]):
+             result(out='divert-keys = {Mouse Gesture Button:Regular}'),
+             result(out='divert-keys = {Mouse Gesture Button:Regular}'),
+             result(out='divert-keys = {Mouse Gesture Button:Regular}')]), \
+             patch.object(d.time, 'sleep'):
             with self.assertRaisesRegex(d.DeviceError,'did not confirm'):
                 d.set_diversion(d.Mouse('MX Master 3','A1B2C3D4'))
 
@@ -97,6 +100,70 @@ class MouseTests(TestCase):
              patch.object(d,'run',return_value=result(1,err='Service failed')):
             with self.assertRaisesRegex(d.DeviceError,'Service failed'):
                 d.start_gestures()
+
+    def test_serialless_connected_mouse_from_real_solaar_show(self):
+        # User's actual "solaar show" output: top-level mouse has empty serial.
+        # Its Unit ID is repeated in the firmware feature description.
+        output = """MX Master 3 Wireless Mouse
+     Device path  : /dev/hidraw4
+     Codename     : MX Master 3
+     Kind         : mouse
+     Protocol     : HID++ 4.5
+     Serial number:
+     Model ID:      B02340820000
+     Unit ID:       E7533B4B
+     Supports 27 HID++ 2.0 features:
+         0: ROOT {0000} V0
+         1: FEATURE SET {0001} V0
+         2: DEVICE FW VERSION {0003} V2
+             Unit ID: E7533B4B  Model ID: B02340820000
+             Name: Wireless Mouse MX Master 3
+             Kind: mouse
+             Friendly Name: MX Master 3
+"""
+        mice = d.parse_mice(output)
+        self.assertEqual(len(mice), 1)
+        self.assertEqual(mice[0].serial, 'E7533B4B')
+        self.assertTrue(mice[0].unit_only)
+        self.assertEqual(mice[0].cli_selector, 'MX Master 3 Wireless Mouse')
+        self.assertEqual(d.choose_mouse(mice).serial, 'E7533B4B')
+
+    def test_serialless_mice_with_same_cli_name_are_not_mutated(self):
+        mice = [d.Mouse('MX Master 3 Wireless Mouse','E7533B4B',True),
+                d.Mouse('MX Master 3 Wireless Mouse','OTHER123',True)]
+        with self.assertRaisesRegex(d.DeviceError, 'cannot uniquely select'):
+            d.choose_mouse(mice, 'E7533B4B')
+
+    def test_full_map_query_avoids_solaar_keyed_read_bug(self):
+        mouse = d.Mouse('MX Master 3 Wireless Mouse', 'E7533B4B', True)
+        output = """# Key/Button Diversion
+# Make the key or button send HID++ notifications
+divert-keys = {Middle Button:Regular, Mouse Gesture Button:Diverted, Back Button:Regular}
+"""
+        with patch.object(d, 'run', return_value=result(out=output)) as run:
+            self.assertTrue(d.diverted(mouse))
+        self.assertEqual(run.call_args.args[0],
+                         ['solaar', 'config', 'MX Master 3 Wireless Mouse', 'divert-keys'])
+
+    def test_full_map_write_uses_mouse_name_for_unit_id_only_device(self):
+        mouse = d.Mouse('MX Master 3 Wireless Mouse', 'E7533B4B', True)
+        before = 'divert-keys = {Middle Button:Regular, Mouse Gesture Button:Regular}'
+        after = 'divert-keys = {Middle Button:Regular, Mouse Gesture Button:Diverted}'
+        with patch.object(d, 'run', side_effect=[result(out=before), result(out='Setting diverted'), result(out=after)]) as command:
+            self.assertTrue(d.set_diversion(mouse))
+        self.assertEqual(command.call_args_list[1].args[0],
+                         ['solaar', 'config', 'MX Master 3 Wireless Mouse',
+                          'divert-keys', '195', '2'])
+
+    def test_full_map_missing_gesture_control_never_claims_diversion(self):
+        with patch.object(d, 'run', return_value=result(out='divert-keys = {Middle Button:Regular}')):
+            with self.assertRaisesRegex(d.DeviceError, 'does not report Mouse Gesture Button'):
+                d.diverted(d.Mouse('MX Master 3', 'E7533B4B', True))
+
+    def test_existing_serial_still_used_for_cli(self):
+        mouse=d.Mouse('MX Master 3','ABCD1234')
+        self.assertEqual(mouse.cli_selector,'ABCD1234')
+        self.assertFalse(mouse.unit_only)
 
     def test_stop_disables_reconnect_monitor_then_driver(self):
         with patch.object(d,'run',return_value=result()) as runner:

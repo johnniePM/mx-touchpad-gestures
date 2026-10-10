@@ -84,7 +84,7 @@ class Preferences(Gtk.Application):
                                      'Choose the Logitech mouse to use for gestures.')
         self.mouse_choice = Gtk.DropDown.new_from_strings(['Searching for mice…'])
         self.mouse_choice.set_sensitive(False)
-        self._row(mouse_section, 'Mouse', 'Select by stable Solaar device serial.',
+        self._row(mouse_section, 'Mouse', 'Select by mouse serial number, or Unit ID when serial is unavailable.',
                   self.mouse_choice)
         self.refresh_button = Gtk.Button(label='Refresh connected mice')
         self.refresh_button.connect('clicked', self._refresh_mice)
