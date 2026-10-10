@@ -134,6 +134,12 @@ class MouseTests(TestCase):
         with self.assertRaisesRegex(d.DeviceError, 'cannot uniquely select'):
             d.choose_mouse(mice, 'E7533B4B')
 
+    def test_unit_only_device_rejects_shared_name_with_serial_device(self):
+        mice = [d.Mouse('MX Master 3 Wireless Mouse', 'E7533B4B', True),
+                d.Mouse('MX Master 3 Wireless Mouse', 'SERIAL5678', False)]
+        with self.assertRaisesRegex(d.DeviceError, 'cannot uniquely select'):
+            d.choose_mouse(mice, 'E7533B4B')
+
     def test_full_map_query_avoids_solaar_keyed_read_bug(self):
         mouse = d.Mouse('MX Master 3 Wireless Mouse', 'E7533B4B', True)
         output = """# Key/Button Diversion

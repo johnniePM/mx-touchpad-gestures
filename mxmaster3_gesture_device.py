@@ -175,7 +175,7 @@ def choose_mouse(mice, serial=None):
         raise DeviceError('Multiple mice detected. Choose one in MX Touchpad Gestures Settings.')
     else:
         match = mice[0]
-    if match.unit_only and sum(m.unit_only and m.name.casefold() == match.name.casefold()
+    if match.unit_only and sum(m.name.casefold() == match.name.casefold()
                                for m in mice) > 1:
         raise DeviceError('Several identical MX Masters have no serial numbers. '
                           'Solaar CLI cannot uniquely select them by Unit ID; '
