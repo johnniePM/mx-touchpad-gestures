@@ -26,11 +26,18 @@ class DeviceError(RuntimeError):
 @dataclass(frozen=True)
 class Mouse:
     name: str
-    serial: str
+    serial: str  # Stable device identity: real serial, or Unit ID if serial is absent.
+    unit_only: bool = False
 
     @property
     def label(self):
-        return f'{self.name}  ·  {self.serial}'
+        return f'{self.name}  ·  {("Unit ID" if self.unit_only else "Serial")} {self.serial}'
+
+    @property
+    def cli_selector(self):
+        # Solaar CLI looks up dev.serial or a substring of dev.name, NOT dev.unitId.
+        # For serial-less HID++ mice address the device by its full reported name.
+        return self.name if self.unit_only else self.serial
 
 
 def run(args, timeout=12):
@@ -54,42 +61,72 @@ def check(result, operation):
     raise DeviceError(f'{operation}: {detail[:180]}')
 
 
+# Match only device section headings. Feature listings also have "1:" lines,
+# and must NOT be mistaken for a new device (the former parser did exactly that).
+MOUSE_NAME = r'(?:MX Master 3S?(?: Wireless Mouse)?|Wireless Mouse MX Master 3S?)'
+DEVICE_HEADING = re.compile(r'^\s*(?:\d+:\s+)?('+MOUSE_NAME+r')\s*$', re.I)
+NUMBERED_HEADING = re.compile(r'^(\s+)\d+:\s+(\S.*)$')
+DEVICE_ID = re.compile(r'^[A-Za-z0-9:_-]{4,64}$')
+
+
 def parse_mice(output):
-    """Parse Solaar's show output, handling receiver and Bluetooth device blocks."""
-    blocks, current = [], None
+    """Parse receiver and direct-device Solaar show blocks.
+
+    Some MX Master 3/3S devices (including Bluetooth) have a blank
+    "Serial number" but provide a stable "Unit ID". Solaar show also
+    emits numbered HID++ feature lines, which are not new devices.
+    """
+    matches, current, heading_indent = [], None, 0
+
+    def finish():
+        if current is None or current['offline'] or current['kind'] not in (None, 'mouse'):
+            return
+        serial = current['serial'] or current['unit_id']
+        if not DEVICE_ID.fullmatch(serial):
+            return
+        if serial not in {m.serial for m in matches}:
+            matches.append(Mouse(current['name'], serial,
+                                 unit_only=not bool(current['serial'])))
+
     for line in output.splitlines():
-        numbered = re.match(r'^\s{2,}\d+:\s+(.+?)\s*$', line)
-        bare = re.match(r'^(?:Wireless Mouse )?MX Master 3S?(?: Wireless Mouse)?\s*$', line)
-        if numbered or bare:
-            if current:
-                blocks.append(current)
-            current = {'name': numbered.group(1) if numbered else line.strip(),
-                       'serial': '', 'offline': False, 'kind': None}
+        heading = DEVICE_HEADING.fullmatch(line)
+        if heading:
+            finish()
+            current = {'name': heading.group(1), 'serial': '',
+                       'unit_id': '', 'offline': False, 'kind': None}
+            heading_indent = len(line) - len(line.lstrip())
             continue
+
+        # Stop at the next numbered device in the same list; ignore
+        # lower-level firmware/feature indices embedded in the device block.
+        numbered = NUMBERED_HEADING.match(line)
+        if (numbered and current is not None
+                and len(numbered.group(1)) <= heading_indent):
+            finish()
+            current = None
+            continue
+
         if current is None:
             continue
         if 'Device is offline.' in line:
             current['offline'] = True
-        serial = re.match(r'^\s+Serial number\s*:\s*(\S+)', line)
+
+        serial = re.match(r'^\s+Serial number\s*:\s*(\S*)\s*$', line)
         if serial:
             current['serial'] = serial.group(1)
-        kind = re.match(r'^\s+Kind\s*:\s*(\S+)', line)
-        if kind:
-            current['kind'] = kind.group(1)
-    if current:
-        blocks.append(current)
-    found, seen = [], set()
-    for item in blocks:
-        name, serial = item['name'], item['serial']
-        if not re.search(r'\bMX Master 3S?\b', name, re.I) or item['offline']:
-            continue
-        if item['kind'] not in (None, 'mouse') or not re.fullmatch(r'[A-Za-z0-9:_-]{4,64}', serial):
-            continue
-        if serial not in seen:
-            found.append(Mouse(name, serial))
-            seen.add(serial)
-    return found
 
+        # Require end-of-line so nested firmware "Unit ID: ... Model ID:"
+        # details cannot overwrite the top-level identity.
+        unit = re.match(r'^\s+Unit ID\s*:\s*([A-Za-z0-9:_-]+)\s*$', line)
+        if unit:
+            current['unit_id'] = unit.group(1)
+
+        kind = re.match(r'^\s+Kind\s*:\s*(\w+)\s*$', line)
+        if kind:
+            current['kind'] = kind.group(1).lower()
+
+    finish()
+    return matches
 
 def list_mice():
     if not shutil.which('solaar'):
@@ -130,35 +167,55 @@ def choose_mouse(mice, serial=None):
     selected = serial if serial is not None else selected_serial()
     if selected:
         match = next((m for m in mice if m.serial == selected), None)
-        if match:
-            return match
-        raise DeviceError('Selected MX Master is disconnected. Reconnect it or choose a new mouse.')
-    if not mice:
+        if not match:
+            raise DeviceError('Selected MX Master is disconnected. Reconnect it or choose a new mouse.')
+    elif not mice:
         raise DeviceError('No connected MX Master 3/3S detected by Solaar.')
-    if len(mice) > 1:
+    elif len(mice) > 1:
         raise DeviceError('Multiple mice detected. Choose one in MX Touchpad Gestures Settings.')
-    return mice[0]
+    else:
+        match = mice[0]
+    if match.unit_only and sum(m.unit_only and m.name.casefold() == match.name.casefold()
+                               for m in mice) > 1:
+        raise DeviceError('Several identical MX Masters have no serial numbers. '
+                          'Solaar CLI cannot uniquely select them by Unit ID; '
+                          'unpair or disconnect the other mouse before configuring.')
+    return match
 
 
 def diverted(mouse):
-    output = check(run(['solaar', 'config', mouse.serial, 'divert-keys', CONTROL]),
+    # Solaar CLI's "divert-keys 195" read path reports "(key not found)"
+    # even for a valid 195: it compares the argument string to integer
+    # map keys. Read the complete map instead (supported CLI read path).
+    output = check(run(['solaar', 'config', mouse.cli_selector, 'divert-keys']),
                    'Check thumb-button diversion')
-    for line in output.splitlines():
-        if re.match(r'^divert-keys\s', line):
-            return bool(re.search(r'\bdiverted\b', line, re.I))
-    raise DeviceError('Solaar could not report the gesture button setting.')
+    setting = re.search(r'^\s*divert-keys\s*=\s*\{([^}]+)\}', output, re.M)
+    if not setting:
+        raise DeviceError('Solaar did not return the diversion settings for this mouse.')
+    entries = [part.strip().split(':', 1) for part in setting.group(1).split(',')]
+    value = next((parts[1].strip() for parts in entries if len(parts) == 2
+                  and parts[0].strip().casefold() in ('mouse gesture button', '195')), None)
+    if value is None:
+        raise DeviceError('This mouse does not report Mouse Gesture Button in Solaar.')
+    if value.casefold() not in ('regular', 'diverted', 'mouse gestures', 'sliding dpi'):
+        raise DeviceError('Solaar reported an unknown gesture-button mode: ' + value[:40])
+    return value.casefold() == 'diverted'
 
 
 def set_diversion(mouse):
     if diverted(mouse):
         return False
-    # Ordinal 2 means Diverted regardless of UI language. Only key 195 is changed.
-    check(run(['solaar', 'config', mouse.serial, 'divert-keys', CONTROL, DIVERTED],
+    # With three possible values the second CLI choice is "Diverted".
+    # Unlike the HID++ raw value, the Solaar command uses choice ordinal 2.
+    check(run(['solaar', 'config', mouse.cli_selector, 'divert-keys', CONTROL, DIVERTED],
               timeout=15), 'Divert thumb button')
-    if not diverted(mouse):
-        raise DeviceError('Solaar did not confirm the gesture button is Diverted.')
-    return True
-
+    # Give the active Solaar instance time to update its setting cache.
+    for attempt in range(3):
+        if diverted(mouse):
+            return True
+        if attempt < 2:
+            time.sleep(0.25)
+    raise DeviceError('Solaar did not confirm Mouse Gesture Button is Diverted.')
 
 def solaar_running():
     return run(['pgrep', '-x', '-u', str(os.getuid()), 'solaar'], 3).returncode == 0
