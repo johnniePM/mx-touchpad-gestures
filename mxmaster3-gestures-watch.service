@@ -1,0 +1,14 @@
+[Unit]
+Description=Restore MX Master gesture-button diversion after reconnect
+Documentation=https://github.com/johnniePM/mx-touchpad-gestures
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /usr/lib/mx-touchpad-gestures/mxmaster3_gesture_device.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

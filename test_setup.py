@@ -1,87 +1,111 @@
-"""Integration provisioning tests (no hardware, Gtk or live Solaar required)."""
+"""Device management tests; no hardware or Solaar process required."""
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import TestCase, main
 from unittest.mock import patch
 import tempfile
-import unittest
+import sys
 
-spec = importlib.util.spec_from_file_location('gesture_setup',
-                                               Path(__file__).with_name('mxmaster3_gesture_setup.py'))
-setup = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(setup)
+source = Path(__file__).with_name('mxmaster3_gesture_device.py')
+spec = importlib.util.spec_from_file_location('mx_gesture_device_test', source)
+d = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = d
+spec.loader.exec_module(d)
+
+SHOW = """solaar version 1.1.20
+Unifying Receiver
+  Device path  : /dev/hidraw3
+  1: MX Master 3S
+     Device path  : None
+     Kind         : mouse
+     Serial number: A1B2C3D4
+  2: MX Keys
+     Kind         : keyboard
+     Serial number: 22223333
+  3: MX Master 3
+     Kind         : mouse
+     Serial number: ABCD1234
+"""
 
 
 def result(rc=0, out='', err=''):
     return SimpleNamespace(returncode=rc, stdout=out, stderr=err)
 
 
-class SetupTests(unittest.TestCase):
-    def test_rule_install_restarts_solaar_and_diverts_button(self):
-        calls = []
-        def command(args, timeout=12):
-            calls.append(args)
-            if args[0] == setup.BRIDGE:
-                return result(0, 'Solaar bridge rules installed')
-            return result()
-        with patch.object(setup, '_run', side_effect=command), \
-             patch.object(setup.shutil, 'which', return_value='/usr/bin/solaar'), \
-             patch.object(setup, 'solaar_running', return_value=True), \
-             patch.object(setup, 'restart_solaar') as restart:
-            self.assertTrue(setup.configure_solaar())
-            restart.assert_called_once()
-            self.assertEqual(calls[1], ['solaar', 'config', 'MX Master 3', 'divert-keys',
-                                        'Mouse Gesture Button', 'Diverted'])
+class MouseTests(TestCase):
+    def test_find_connected_devices_and_ignore_keyboards(self):
+        mice=d.parse_mice(SHOW)
+        self.assertEqual([(m.name,m.serial) for m in mice],
+                         [('MX Master 3S','A1B2C3D4'),('MX Master 3','ABCD1234')])
+        self.assertEqual(d.choose_mouse(mice,'ABCD1234').name,'MX Master 3')
 
-    def test_rules_unchanged_skips_restart(self):
-        with patch.object(setup, '_run', side_effect=[
-             result(0, 'Solaar bridge rules up to date'), result()]), \
-             patch.object(setup.shutil, 'which', return_value='/usr/bin/solaar'), \
-             patch.object(setup, 'solaar_running', return_value=True), \
-             patch.object(setup, 'restart_solaar') as restart:
-            self.assertTrue(setup.configure_solaar())
-            restart.assert_not_called()
+    def test_multiple_mice_require_explicit_choice(self):
+        with self.assertRaisesRegex(d.DeviceError,'Multiple mice'):
+            d.choose_mouse(d.parse_mice(SHOW),'')
 
-    def test_no_solaar_allows_direct_input(self):
-        with patch.object(setup.shutil, 'which', return_value=None), \
-             patch.object(setup, '_run') as command:
-            self.assertFalse(setup.configure_solaar())
-            command.assert_not_called()
+    def test_offline_device_ignored(self):
+        self.assertFalse(d.parse_mice('  1: MX Master 3S\n     Device is offline.\n'))
 
-    def test_unavailable_mouse_never_claims_success(self):
-        with patch.object(setup, '_run', side_effect=[
-             result(0, 'Solaar bridge rules up to date')] +
-             [result(1, err='No matching device')]*6), \
-             patch.object(setup.shutil, 'which', return_value='/usr/bin/solaar'), \
-             patch.object(setup, 'solaar_running', return_value=True), \
-             patch.object(setup.time, 'sleep'):
-            with self.assertRaisesRegex(setup.SetupError, 'cannot divert'):
-                setup.configure_solaar()
+    def test_persisted_selection_is_private(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'selection.json'
+            d.save_selection('A1B2C3D4',path)
+            self.assertEqual(d.selected_serial(path),'A1B2C3D4')
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
 
-    def test_initial_setup_starts_service_and_records_success(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(setup, 'MARKER', Path(tmp)/'marker'), \
-             patch.object(setup, 'configure_solaar', return_value=True), \
-             patch.object(setup, 'service_action') as action:
-            self.assertTrue(setup.needs_initial_setup())
-            self.assertIn('Gestures are running', setup.setup_and_start())
-            action.assert_called_once_with('start')
-            self.assertFalse(setup.needs_initial_setup())
+    def test_select_does_not_silently_switch_mice_after_disconnect(self):
+        with self.assertRaisesRegex(d.DeviceError,'disconnected'):
+            d.choose_mouse(d.parse_mice(SHOW),'MISSINGDEV')
 
-    def test_failed_setup_does_not_start_or_mark_success(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(setup, 'MARKER', Path(tmp)/'marker'), \
-             patch.object(setup, 'configure_solaar', side_effect=setup.SetupError('offline')), \
-             patch.object(setup, 'service_action') as action:
-            with self.assertRaisesRegex(setup.SetupError, 'offline'):
-                setup.setup_and_start()
-            self.assertTrue(setup.needs_initial_setup())
-            action.assert_not_called()
+    def test_numeric_control_and_diversion_choice(self):
+        mouse=d.Mouse('MX Master 3S','A1B2C3D4')
+        with patch.object(d,'run',side_effect=[
+             result(out='divert-keys = {Mouse Gesture Button:Regular}'),
+             result(out='Setting divert-keys key 195 to Diverted'),
+             result(out='divert-keys = {Mouse Gesture Button:Diverted}')]) as runner:
+            self.assertTrue(d.set_diversion(mouse))
+        self.assertEqual(runner.call_args_list[1].args[0],
+                         ['solaar','config','A1B2C3D4','divert-keys','195','2'])
 
-    def test_service_action_whitelist(self):
-        with self.assertRaises(ValueError):
-            setup.service_action('disable')
+    def test_idempotent_when_already_diverted(self):
+        with patch.object(d,'run',return_value=result(out='divert-keys = {Mouse Gesture Button:Diverted}')) as runner:
+            self.assertFalse(d.set_diversion(d.Mouse('MX Master 3','A1B2C3D4')))
+            self.assertEqual(runner.call_count,1)
+
+    def test_successful_wayland_warning_not_error(self):
+        with patch.object(d,'run',return_value=result(
+             out='divert-keys = {Mouse Gesture Button:Diverted}',
+             err='rules cannot access modifier keys in Wayland, accessing process only works on GNOME with Solaar Gnom')):
+            self.assertTrue(d.diverted(d.Mouse('MX Master 3','A1B2C3D4')))
+
+    def test_failed_set_does_not_claim_success(self):
+        with patch.object(d,'run',side_effect=[
+             result(out='divert-keys = {Mouse Gesture Button:Regular}'),
+             result(out='Changed'),
+             result(out='divert-keys = {Mouse Gesture Button:Regular}')]):
+            with self.assertRaisesRegex(d.DeviceError,'did not confirm'):
+                d.set_diversion(d.Mouse('MX Master 3','A1B2C3D4'))
+
+    def test_start_fails_without_claiming_success(self):
+        mouse=d.Mouse('MX Master 3','A1B2C3D4')
+        with patch.object(d,'solaar_running',return_value=True), \
+             patch.object(d,'list_mice',return_value=[mouse]), \
+             patch.object(d,'install_rules',return_value=False), \
+             patch.object(d,'set_diversion'), \
+             patch.object(d,'selected_serial',return_value='A1B2C3D4'), \
+             patch.object(d,'run',return_value=result(1,err='Service failed')):
+            with self.assertRaisesRegex(d.DeviceError,'Service failed'):
+                d.start_gestures()
+
+    def test_stop_disables_reconnect_monitor_then_driver(self):
+        with patch.object(d,'run',return_value=result()) as runner:
+            d.stop_gestures()
+        self.assertEqual(runner.call_args_list[0].args[0],
+                         ['systemctl','--user','stop',d.WATCH])
+        self.assertEqual(runner.call_args_list[1].args[0],
+                         ['systemctl','--user','stop',d.SERVICE])
 
 
 if __name__ == '__main__':
-    unittest.main()
+    main()
