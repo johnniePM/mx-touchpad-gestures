@@ -12,14 +12,11 @@ cd mx-touchpad-gestures
 makepkg -si
 ```
 
-For Logitech thumb-button diversion, install Solaar and configure its bridge:
+After installing, open **MX Touchpad Gestures Settings** in GNOME Activities. On first launch, the application automatically installs its Solaar button rules, starts or reloads Solaar when needed, sets **Mouse Gesture Button → Diverted**, and starts the gesture service.
 
-```bash
-sudo pacman -S solaar
-mxmaster3-gestures-setup
-```
+The **MX Master 3 Gestures** start/stop launcher also configures Solaar when starting gestures. If the thumb button stops responding, select **Repair Solaar connection** in Settings. No terminal setup command or manual Solaar restart is required.
 
-In Solaar's main window, select your MX Master 3, open **Key/Button Diversion** (`Tangent/knapp avledning`), select **Mouse Gesture Button** (`Mus gestknapp`), and set it to **Diverted** (`Avledd`), **not** Mouse Gestures. Completely quit and restart Solaar. Keep Solaar running. If your mouse exposes the thumb button through Linux evdev directly, Solaar is optional.
+Solaar is optional if the gesture button is available directly through Linux evdev. For Logitech HID++ diversion, install Solaar with `sudo pacman -S solaar`. Connection failures appear in Settings; the repair action can be retried. Unrelated Solaar rules are preserved.
 
 ## Open Settings
 
@@ -38,9 +35,9 @@ Available settings:
 - **Flick activation speed:** Minimum mouse movement speed before boost begins. GNOME supplies its own native release animation; this app does not keep moving the virtual touchpad after you release the button.
 - **GNOME pointer speed:** Changes GNOME's real system mouse-speed setting for all GNOME applications, independently of gesture speed. It does not alter the hardware DPI.
 
-Select **Save and apply**. Settings persist in `~/.config/mxmaster3-gestures.conf`. The running user service restarts automatically on Apply; a stopped service remains stopped. The window also has **Start gestures** and **Stop gestures** controls.
+Select **Save and apply**. Settings persist in `~/.config/mxmaster3-gestures.conf`. The running user service restarts automatically on Apply; a stopped service remains stopped. The window also has **Start gestures**, **Stop gestures**, and **Repair Solaar connection** controls.
 
-The existing **MX Master 3 Gestures** launcher toggles the driver. Installation does not auto-start the service.
+The **MX Master 3 Gestures** launcher toggles the driver. Opening Settings for the first time starts gestures after successful connection setup; later intentional stops are respected.
 
 ## Troubleshooting
 
@@ -86,8 +83,8 @@ Personal configuration remains untouched by pacman removal.
 Development checks:
 
 ```bash
-python3 -m unittest -q test_gestures.py
-bash -n PKGBUILD mxmaster3-gestures-setup mx-touchpad-gestures.install
+python3 -m unittest -q test_gestures.py test_setup.py
+bash -n PKGBUILD mx-touchpad-gestures.install
 cc -std=c11 -Wall -Wextra -o /tmp/mxmaster3-gesture-signal fast_signal.c
 ```
 
