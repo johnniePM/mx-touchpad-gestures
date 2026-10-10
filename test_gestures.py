@@ -5,6 +5,7 @@ import unittest
 import io
 import contextlib
 from unittest.mock import patch
+from mxmaster3_gesture_config import GestureSettings
 
 MODULE = pathlib.Path(__file__).with_name('mxmaster3_gestures.py')
 spec = importlib.util.spec_from_file_location('mxmaster3_gestures', MODULE)
@@ -101,7 +102,7 @@ class GestureTests(unittest.TestCase):
     def setUp(self):
         m.e = Codes
         m.AbsInfo = lambda *args: args
-        self.pad = m.SwipeTouchpad(Recorder)
+        self.pad = m.SwipeTouchpad(Recorder, settings=GestureSettings())
         self.pad.gain = 2.0
         self.ui = self.pad.device
 
@@ -316,7 +317,7 @@ class SolaarBridgeTests(unittest.TestCase):
     def setUp(self):
         m.e = Codes
         m.AbsInfo = lambda *args: args
-        self.pad = m.SwipeTouchpad(Recorder)
+        self.pad = m.SwipeTouchpad(Recorder, settings=GestureSettings())
 
     def tearDown(self):
         self.pad.close()
@@ -400,7 +401,7 @@ class SolaarSocketLoopTests(unittest.TestCase):
             with patch.dict(os.environ, {'XDG_RUNTIME_DIR': directory}):
                 m.e = Codes
                 m.AbsInfo = lambda *args: args
-                pad = m.SwipeTouchpad(Recorder)
+                pad = m.SwipeTouchpad(Recorder, settings=GestureSettings())
                 mouse = Mouse()
                 rfd, wfd = os.pipe()
                 mouse.fd = rfd

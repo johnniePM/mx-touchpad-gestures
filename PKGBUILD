@@ -1,7 +1,7 @@
 # Maintainer: MX Touchpad Gestures contributors
 pkgname=mx-touchpad-gestures
 pkgver=0.6.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Configure native GNOME touchpad swipes with a Logitech MX Master 3 gesture button'
 arch=('x86_64')
 url='https://github.com/johnniePM/mx-touchpad-gestures'
@@ -38,7 +38,7 @@ sha256sums=(
   'b50fdfdd253387cfc01795b33df828c6cad5f100012fb70cfe3d9e37639788fd'
   'a771c9695d7283f7771adc00b680bd27391e6ac00e9fd026f4796067ee9a87eb'
   '08704ed1df538f522a2216207f19345cafffdd665481c05199ca1806b524c106'
-  '7571f64ab4ff4f90bc35ff1cfed1ebe4c238daafa322aed3853f8f263edb1f05'
+  'c081dce3b31f5c365abcd77c3910cc922b04a64fc0317cf860f3db80cd161096'
   '6efb188eaeb35b6dbf0c8c1b77a5dc9790806ca7dc0a2a43669695633de0d760'
   '8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef'
 )
