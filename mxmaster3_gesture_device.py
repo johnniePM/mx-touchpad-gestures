@@ -219,9 +219,15 @@ def monitor(interval=12):
     """Reassert selected thumb diversion after a reconnect without starting gestures."""
     while True:
         try:
-            set_diversion(choose_mouse(list_mice()))
+            mouse = choose_mouse(list_mice())
+            set_diversion(mouse)
+            # The watch service runs only while gestures were deliberately
+            # started. Recover the input daemon if it exited during unplug.
+            if run(['systemctl', '--user', 'is-active', '--quiet', SERVICE], 4).returncode != 0:
+                check(run(['systemctl', '--user', 'start', SERVICE], 20),
+                      'Restart gesture driver after reconnect')
         except DeviceError:
-            pass  # Mouse may be sleeping, disconnected, or Solaar may be restarting.
+            pass  # Mouse may be asleep, unplugged, or Solaar may be reconnecting.
         time.sleep(interval)
 
 
