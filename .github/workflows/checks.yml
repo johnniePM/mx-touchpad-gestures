@@ -2,7 +2,6 @@ name: Validate MX Touchpad Gestures
 
 on:
   push:
-    branches: [main, feature/device-selection-reconnect]
   pull_request:
 
 jobs:
