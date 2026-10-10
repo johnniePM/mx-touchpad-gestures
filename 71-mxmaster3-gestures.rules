@@ -1,0 +1,4 @@
+# Provide access only to active local sessions via systemd-logind ACLs.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*MX Master 3*", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Logitech USB Receiver", ATTRS{id/vendor}=="046d", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="misc", KERNEL=="uinput", TAG+="uaccess", OPTIONS+="static_node=uinput"

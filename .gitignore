@@ -1,0 +1,11 @@
+# makepkg output
+/pkg/
+/src/
+/*.pkg.tar.*
+/*.src.tar.*
+*.log
+*.log.*
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

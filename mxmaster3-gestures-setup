@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Configure Solaar and the GNOME user service. Never run this as root.
+set -euo pipefail
+if (( EUID == 0 )); then
+  echo 'Run this as your regular desktop user, not with sudo.' >&2
+  exit 1
+fi
+
+legacy_unit="$HOME/.config/systemd/user/mxmaster3-gestures.service"
+legacy_desktop="$HOME/.local/share/applications/mxmaster3-gestures.desktop"
+
+# A user-specific service takes precedence over the packaged systemd user unit.
+# Move only entries matching this application; leave unrelated overrides intact.
+if [[ -f "$legacy_unit" ]]; then
+  if ! grep -Fq '.local/share/mxmaster3-gestures/mxmaster3_gestures.py --run' "$legacy_unit"; then
+    echo "Custom user service exists: $legacy_unit" >&2
+    echo 'Refusing to replace it. Inspect or move it aside manually.' >&2
+    exit 1
+  fi
+fi
+if [[ -f "$legacy_desktop" ]]; then
+  if ! grep -Fq '.local/share/mxmaster3-gestures/mxmaster3_gestures.py' "$legacy_desktop"; then
+    echo "Custom desktop entry exists: $legacy_desktop" >&2
+    echo 'Refusing to replace it. Inspect or move it aside manually.' >&2
+    exit 1
+  fi
+fi
+
+systemctl --user stop mxmaster3-gestures.service 2>/dev/null || true
+for file in "$legacy_unit" "$legacy_desktop"; do
+  if [[ -f "$file" ]]; then
+    backup="${file}.mxg-backup-$(date +%Y%m%d-%H%M%S)-$"
+    mv -- "$file" "$backup"
+    echo "Backed up conflicting user override: $backup"
+  fi
+done
+systemctl --user daemon-reload
+systemctl --user reset-failed mxmaster3-gestures.service 2>/dev/null || true
+/usr/bin/mxmaster3-solaar-bridge install
+cat <<'MESSAGE'
+
+Setup complete. In Solaar, set Mouse Gesture Button -> Diverted.
+Fully quit and restart Solaar to load the updated rules.
+Launch MX Master 3 Gestures from GNOME Activities to start/stop.
+If input permissions are unavailable, reconnect the mouse or log out/in.
+MESSAGE

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MX Master 3 Gestures
+Comment=Start or stop continuous GNOME workspace and Overview swipes
+Exec=/usr/bin/mxmaster3-gestures --toggle
+Icon=input-mouse
+Terminal=false
+Categories=Utility;Settings;
+StartupNotify=false

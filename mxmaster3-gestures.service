@@ -1,0 +1,19 @@
+[Unit]
+Description=MX Master 3 native Wayland touchpad gestures
+Documentation=https://github.com/johnniePM/mx-touchpad-gestures
+After=graphical-session.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=15
+ExecStart=/usr/bin/mxmaster3-gestures --run
+Restart=on-failure
+RestartSec=4
+RestartPreventExitStatus=78
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/mxmaster3-gestures.conf
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
