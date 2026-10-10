@@ -1,0 +1,20 @@
+name: Validate MX Touchpad Gestures
+
+on:
+  push:
+    branches: [main, feature/device-selection-reconnect]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test gesture logic and device integration
+        run: python3 -m unittest -q test_gestures.py test_setup.py
+      - name: Compile Python modules
+        run: python3 -m py_compile mxmaster3_gestures.py mxmaster3_gestures_settings.py mxmaster3_gesture_config.py mxmaster3_gesture_device.py mxmaster3_gesture_setup.py solaar_bridge.py
+      - name: Check shell syntax and native helper
+        run: |
+          bash -n PKGBUILD mx-touchpad-gestures.install mxmaster3-gestures-setup
+          cc -std=c11 -Wall -Wextra -Werror -o /tmp/mxmaster3-gesture-signal fast_signal.c
