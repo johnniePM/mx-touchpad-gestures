@@ -29,7 +29,7 @@ fi
 systemctl --user stop mxmaster3-gestures.service 2>/dev/null || true
 for file in "$legacy_unit" "$legacy_desktop"; do
   if [[ -f "$file" ]]; then
-    backup="${file}.mxg-backup-$(date +%Y%m%d-%H%M%S)-$"
+    backup="${file}.mxg-backup-$(date +%Y%m%d-%H%M%S)-$$"
     mv -- "$file" "$backup"
     echo "Backed up conflicting user override: $backup"
   fi

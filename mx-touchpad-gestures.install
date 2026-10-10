@@ -1,13 +1,14 @@
 post_install() {
   printf '%s\n' 'MX Touchpad Gestures installed.' \
-    'As your desktop user, run: mxmaster3-gestures-setup' \
+    'Open MX Touchpad Gestures Settings in GNOME Activities.' \
+    'For Logitech thumb diversion, run mxmaster3-gestures-setup as your user.' \
     'Configure Solaar: Mouse Gesture Button -> Diverted; restart Solaar.' \
-    'Reconnect your mouse or log out/in if input ACLs are not updated.'
+    'Reconnect the mouse or log out/in if input ACLs are not updated.'
 }
 post_upgrade() {
-  printf '%s\n' 'MX Touchpad Gestures upgraded. Restart the user service if it is active:' \
-    'systemctl --user restart mxmaster3-gestures.service'
+  printf '%s\n' 'MX Touchpad Gestures upgraded. Open Settings to configure gestures.' \
+    'Restart the user service if it is active: systemctl --user restart mxmaster3-gestures.service'
 }
 post_remove() {
-  printf '%s\n' 'Package files removed. Personal Solaar rules are unchanged.'
+  printf '%s\n' 'Package files removed. Personal Solaar rules and settings are unchanged.'
 }

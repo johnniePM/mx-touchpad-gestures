@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MX Touchpad Gestures Settings
+Comment=Configure touchpad swipe speed, finger count, flick response and mouse pointer speed
+Exec=/usr/bin/mxmaster3-gestures-settings
+Icon=input-mouse
+Terminal=false
+Categories=Settings;Utility;
+StartupNotify=true

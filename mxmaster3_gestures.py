@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MX Master 3/3S -> native GNOME three-finger gestures (Wayland).
+"""MX Master 3/3S -> native GNOME multi-finger gestures (Wayland).
 
 Hold the thumb gesture button (BTN_TASK, KEY_PROG3 or remapped F24) and move.
 The normal physical mouse remains kernel-controlled; only during a gesture is
@@ -13,6 +13,7 @@ adapted for Logitech evdev movement.
 
 import argparse
 import logging
+import math
 import os
 import stat
 import selectors
@@ -22,6 +23,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Shared configuration lives with package data; source checkouts import locally.
+if Path(__file__).resolve().parent == Path('/usr/bin'):
+    sys.path.insert(0, '/usr/lib/mx-touchpad-gestures')
+from mxmaster3_gesture_config import GestureSettings, read_settings
 
 try:
     from evdev import AbsInfo, InputDevice, UInput, ecodes as e, list_devices
@@ -41,10 +47,7 @@ TOUCH_MAX = 4095
 CENTER = TOUCH_MAX // 2
 FINGER_SPACING = 260  # ~5.8 mm at 45 units/mm
 TOUCH_RESOLUTION = 45
-try:
-    SENSITIVITY = max(0.1, min(10.0, float(os.environ.get("MXG_SENSITIVITY", "2.0"))))
-except ValueError:
-    SENSITIVITY = 2.0
+SENSITIVITY = 2.0  # default; user settings are read at device creation
 NAME = "MX Master 3 Native Gesture Touchpad"
 SERVICE = "mxmaster3-gestures.service"
 CONTROL_SOCKET = "mxmaster3-gestures-control.sock"
@@ -52,19 +55,25 @@ SOLAAR_SOURCE = object()
 
 
 class SwipeTouchpad:
-    """Emit a three-contact type-B sequence that GNOME interprets natively."""
+    """Emit a type-B 3- or 4-contact swipe accepted by GNOME/libinput."""
 
-    def __init__(self, factory=None):
+    def __init__(self, factory=None, settings=None):
         if e is None:
             raise RuntimeError("Missing python-evdev. On Arch: sudo pacman -S python-evdev")
+        self.settings = settings if settings is not None else read_settings()
+        self.fingers = self.settings.fingers
+        self.tool_code = e.BTN_TOOL_TRIPLETAP if self.fingers == 3 else e.BTN_TOOL_QUADTAP
+        offsets = (-FINGER_SPACING, 0, FINGER_SPACING) if self.fingers == 3 else (-390, -130, 130, 390)
+        self.offsets = offsets
         position = AbsInfo(CENTER, 0, TOUCH_MAX, 0, 0, TOUCH_RESOLUTION)
         caps = {
             e.EV_KEY: [e.BTN_TOUCH, e.BTN_TOOL_FINGER,
-                       e.BTN_TOOL_DOUBLETAP, e.BTN_TOOL_TRIPLETAP],
+                       e.BTN_TOOL_DOUBLETAP, e.BTN_TOOL_TRIPLETAP,
+                       e.BTN_TOOL_QUADTAP],
             e.EV_ABS: [
                 (e.ABS_X, position),
                 (e.ABS_Y, position),
-                (e.ABS_MT_SLOT, AbsInfo(0, 0, 2, 0, 0, 0)),
+                (e.ABS_MT_SLOT, AbsInfo(0, 0, 3, 0, 0, 0)),
                 (e.ABS_MT_POSITION_X, position),
                 (e.ABS_MT_POSITION_Y, position),
                 (e.ABS_MT_TRACKING_ID, AbsInfo(0, 0, 65535, 0, 0, 0)),
@@ -79,14 +88,14 @@ class SwipeTouchpad:
         self.ids = 1
         self.x = 0.0
         self.y = 0.0
-        self.gain = SENSITIVITY
-        LOG.info("Created virtual touchpad: %s", NAME)
+        self.gain = self.settings.sensitivity
+        LOG.info("Created virtual touchpad: %s (%d fingers)", NAME, self.fingers)
 
     def _position(self):
         cx, cy = round(CENTER + self.x), round(CENTER + self.y)
         self.device.write(e.EV_ABS, e.ABS_X, cx)
         self.device.write(e.EV_ABS, e.ABS_Y, cy)
-        for slot, offset in enumerate((-FINGER_SPACING, 0, FINGER_SPACING)):
+        for slot, offset in enumerate(self.offsets):
             self.device.write(e.EV_ABS, e.ABS_MT_SLOT, slot)
             self.device.write(e.EV_ABS, e.ABS_MT_POSITION_X, cx + offset)
             self.device.write(e.EV_ABS, e.ABS_MT_POSITION_Y, cy)
@@ -99,32 +108,32 @@ class SwipeTouchpad:
         if self.ids > 65000:
             self.ids = 1
         self.device.write(e.EV_KEY, e.BTN_TOUCH, 1)
-        self.device.write(e.EV_KEY, e.BTN_TOOL_TRIPLETAP, 1)
-        for slot in range(3):
+        self.device.write(e.EV_KEY, self.tool_code, 1)
+        for slot in range(self.fingers):
             self.device.write(e.EV_ABS, e.ABS_MT_SLOT, slot)
             self.device.write(e.EV_ABS, e.ABS_MT_TRACKING_ID, self.ids + slot)
-        self.ids += 3
+        self.ids += self.fingers
         self._position()
         self.active = True
 
-    def move(self, dx, dy):
+    def move(self, dx, dy, velocity_multiplier=1.0):
         if not self.active:
             return
         # Preserve direction and reversal; clamp to the physical pad limits.
-        xlimit = CENTER - FINGER_SPACING
+        xlimit = CENTER - max(abs(n) for n in self.offsets)
         ylimit = CENTER
-        self.x = max(-xlimit, min(xlimit, self.x + dx * self.gain))
-        self.y = max(-ylimit, min(ylimit, self.y + dy * self.gain))
+        self.x = max(-xlimit, min(xlimit, self.x + dx * self.gain * velocity_multiplier))
+        self.y = max(-ylimit, min(ylimit, self.y + dy * self.gain * velocity_multiplier))
         self._position()
 
     def end(self):
         if not self.active:
             return
-        for slot in range(3):
+        for slot in range(self.fingers):
             self.device.write(e.EV_ABS, e.ABS_MT_SLOT, slot)
             self.device.write(e.EV_ABS, e.ABS_MT_TRACKING_ID, -1)
         self.device.write(e.EV_KEY, e.BTN_TOUCH, 0)
-        self.device.write(e.EV_KEY, e.BTN_TOOL_TRIPLETAP, 0)
+        self.device.write(e.EV_KEY, self.tool_code, 0)
         self.device.syn()
         self.active = False
 
@@ -284,10 +293,23 @@ class GestureRunner:
         self.dx = self.dy = 0
         self.started = 0.0
         self.control_socket = None
+        self.last_motion_at = None
+        self.settings = touchpad.settings
 
     def flush(self):
         if self.held and (self.dx or self.dy):
-            self.touchpad.move(self.dx, self.dy)
+            factor = 1.0
+            now = time.monotonic()
+            if self.settings.flick_enabled and self.settings.flick_boost > 0:
+                # Counts/second: amplify quick swipes while fingers are down;
+                # GNOME handles the native end-of-swipe animation on release.
+                # Avoid a zero-duration frame artificially becoming a flick.
+                dt = max(0.008, now - (self.last_motion_at or now))
+                velocity = math.hypot(self.dx, self.dy) / dt
+                excess = max(0.0, velocity / self.settings.flick_threshold - 1.0)
+                factor += self.settings.flick_boost * min(excess, 1.0)
+            self.touchpad.move(self.dx, self.dy, factor)
+            self.last_motion_at = now
         self.dx = self.dy = 0
 
     def press(self, source=None, code=None):
@@ -307,6 +329,7 @@ class GestureRunner:
         self.trigger_source = source
         self.trigger_code = code
         self.started = time.monotonic()
+        self.last_motion_at = self.started
         LOG.info("Gesture started: %s on %s (cursor frozen)",
                  e.KEY.get(code, code), getattr(source, 'name', '(unknown)'))
 
@@ -321,6 +344,7 @@ class GestureRunner:
             self.trigger_source = None
             self.trigger_code = None
             self.dx = self.dy = 0
+            self.last_motion_at = None
             if self.grabbed:
                 self.mouse.ungrab()
                 self.grabbed = False

@@ -21,6 +21,7 @@ class Codes:
     BTN_TOOL_FINGER = 325
     BTN_TOOL_DOUBLETAP = 333
     BTN_TOOL_TRIPLETAP = 334
+    BTN_TOOL_QUADTAP = 335
     ABS_X = 0
     ABS_Y = 1
     ABS_MT_SLOT = 47
@@ -114,7 +115,8 @@ class GestureTests(unittest.TestCase):
         caps = self.ui.capabilities
         self.assertEqual(set(caps), {Codes.EV_ABS, Codes.EV_KEY})
         self.assertEqual(caps[Codes.EV_KEY], [Codes.BTN_TOUCH, Codes.BTN_TOOL_FINGER,
-                                           Codes.BTN_TOOL_DOUBLETAP, Codes.BTN_TOOL_TRIPLETAP])
+                                           Codes.BTN_TOOL_DOUBLETAP, Codes.BTN_TOOL_TRIPLETAP,
+                                           Codes.BTN_TOOL_QUADTAP])
         self.assertEqual(self.ui.kwargs['input_props'], [Codes.INPUT_PROP_POINTER])
         self.assertEqual(self.ui.kwargs['max_effects'], 0)
 
@@ -525,6 +527,105 @@ class FastSolaarSignalTests(unittest.TestCase):
                 self.assertEqual(rules.read_text(), other)
 
 
+class SettingsTests(unittest.TestCase):
+    """Test settings with no GTK, Logitech hardware, or real user config."""
+
+    def test_four_finger_swipe_is_real_four_contact_mt(self):
+        from mxmaster3_gesture_config import GestureSettings
+        m.e = Codes
+        m.AbsInfo = lambda *args: args
+        pad = m.SwipeTouchpad(Recorder, settings=GestureSettings(fingers=4))
+        try:
+            caps = pad.device.capabilities
+            self.assertIn(Codes.BTN_TOOL_QUADTAP, caps[Codes.EV_KEY])
+            slot_cap = next(info for code, info in caps[Codes.EV_ABS] if code == Codes.ABS_MT_SLOT)
+            self.assertEqual(slot_cap[2], 3)
+            pad.begin()
+            tool_events = pad.device.writes
+            self.assertIn((Codes.EV_KEY, Codes.BTN_TOOL_QUADTAP, 1), tool_events)
+            tracks = [e[2] for e in tool_events if len(e) == 3 and e[:2] == (Codes.EV_ABS, Codes.ABS_MT_TRACKING_ID)]
+            self.assertEqual(tracks, [1, 2, 3, 4])
+            pad.move(20, -15)
+            self.assertEqual(pad.x, 40)
+            pad.end()
+            self.assertEqual([e[2] for e in pad.device.writes if len(e)==3 and e[:2]==(Codes.EV_ABS, Codes.ABS_MT_TRACKING_ID)][-4:], [-1]*4)
+            self.assertIn((Codes.EV_KEY, Codes.BTN_TOOL_QUADTAP, 0), pad.device.writes)
+            self.assertNotIn((Codes.EV_KEY, Codes.BTN_TOOL_TRIPLETAP, 1), pad.device.writes)
+        finally:
+            pad.close()
+
+    def test_flick_threshold_and_strength(self):
+        from mxmaster3_gesture_config import GestureSettings
+        m.e = Codes
+        m.AbsInfo = lambda *args: args
+        settings = GestureSettings(flick_enabled=True, flick_boost=1.0, flick_threshold=600)
+        pad = m.SwipeTouchpad(Recorder, settings=settings)
+        mouse = Mouse()
+        runner = m.GestureRunner(mouse, [mouse], pad)
+        try:
+            with patch.object(m.time, 'monotonic', side_effect=[100.0, 100.02, 100.04]):
+                runner.press()
+                runner.dx = 10  # 500 counts/sec: no extra movement
+                runner.flush()
+                self.assertEqual(pad.x, 20)
+                runner.dx = 40  # 2000 counts/sec: max 2x velocity multiplier
+                runner.flush()
+                self.assertEqual(pad.x, 180)
+            runner.release()
+        finally:
+            runner.close()
+
+    def test_flick_disabled_preserves_exact_old_motion(self):
+        from mxmaster3_gesture_config import GestureSettings
+        m.e = Codes
+        m.AbsInfo = lambda *args: args
+        pad = m.SwipeTouchpad(Recorder, settings=GestureSettings(flick_enabled=False, flick_boost=2.0))
+        mouse = Mouse()
+        runner = m.GestureRunner(mouse, [mouse], pad)
+        try:
+            runner.press()
+            runner.dx = 20
+            runner.flush()
+            self.assertEqual(pad.x, 40)
+        finally:
+            runner.close()
+
+    def test_settings_save_load_preserves_custom_device_variables(self):
+        import tempfile
+        from mxmaster3_gesture_config import read_settings, write_settings, GestureSettings
+        with tempfile.TemporaryDirectory() as root:
+            path = pathlib.Path(root) / 'config.conf'
+            path.write_text('# Manual settings\nMXG_MOUSE=/dev/input/event42\nMXG_FINGERS=3\n')
+            settings = GestureSettings(3.25, 4, True, 1.5, 950)
+            write_settings(settings, path)
+            first = path.read_text()
+            self.assertIn('MXG_MOUSE=/dev/input/event42', first)
+            self.assertEqual(first.count('MXG_FINGERS='), 1)
+            self.assertEqual(read_settings(path, env={}), settings)
+            write_settings(settings, path)
+            self.assertEqual(first, path.read_text())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(read_settings(path, env={'MXG_FINGERS':'3'}).fingers, 3)
+
+    def test_invalid_configs_are_safe_and_do_not_change_user_file(self):
+        import tempfile
+        from mxmaster3_gesture_config import read_settings, write_settings, GestureSettings
+        with tempfile.TemporaryDirectory() as root:
+            path = pathlib.Path(root) / 'config.conf'
+            path.write_text('MXG_SENSITIVITY=nan\nMXG_FINGERS=100\nMXG_FLICK_BOOST=inf\nMXG_FLICK_THRESHOLD=-500\n')
+            self.assertEqual(read_settings(path, env={}), GestureSettings())
+            original = path.read_text()
+            with self.assertRaises(ValueError):
+                write_settings(GestureSettings(fingers=12), path)
+            self.assertEqual(path.read_text(), original)
+            path.write_text('# BEGIN MX Touchpad Gestures preferences\ncorrupted')
+            with self.assertRaises(ValueError):
+                write_settings(GestureSettings(), path)
+
+    def test_config_has_no_gtk_runtime_dependency(self):
+        import mxmaster3_gesture_config as config
+        self.assertFalse('gi' in config.__dict__)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
-
