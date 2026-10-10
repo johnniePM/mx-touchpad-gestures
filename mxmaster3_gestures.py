@@ -28,7 +28,7 @@ from pathlib import Path
 if Path(__file__).resolve().parent == Path('/usr/bin'):
     sys.path.insert(0, '/usr/lib/mx-touchpad-gestures')
 from mxmaster3_gesture_config import GestureSettings, read_settings
-from mxmaster3_gesture_setup import setup_and_start, SetupError
+from mxmaster3_gesture_setup import setup_and_start, stop_gestures, SetupError
 
 try:
     from evdev import AbsInfo, InputDevice, UInput, ecodes as e, list_devices
@@ -673,15 +673,15 @@ def toggle():
             LOG.error(message)
             returncode = 1
     else:
-        result = subprocess.run(["systemctl", "--user", "stop", SERVICE],
-                                capture_output=True, text=True)
-        returncode = result.returncode
-        message = ("Gestures stopped — normal mouse unchanged" if not returncode
-                   else (result.stderr or "Unable to stop service").strip()[:250])
-        if returncode:
-            LOG.error(message)
-        else:
+        try:
+            stop_gestures()
+            returncode = 0
+            message = "Gestures stopped — normal mouse unchanged"
             LOG.info(message)
+        except (SetupError, OSError, RuntimeError) as exc:
+            returncode = 1
+            message = f"Unable to stop gestures: {exc}"
+            LOG.error(message)
     if subprocess.run(["sh", "-c", "command -v notify-send >/dev/null 2>&1"]).returncode == 0:
         subprocess.run(["notify-send", "MX Master 3 Gestures", message], check=False)
     return returncode

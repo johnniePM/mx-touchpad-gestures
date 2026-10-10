@@ -12,7 +12,8 @@ import threading
 if __file__.startswith('/usr/bin/'):
     sys.path.insert(0, '/usr/lib/mx-touchpad-gestures')
 from mxmaster3_gesture_config import GestureSettings, read_settings, write_settings
-from mxmaster3_gesture_setup import setup_and_start, needs_initial_setup
+from mxmaster3_gesture_setup import setup_and_start, needs_initial_setup, stop_gestures
+from mxmaster3_gesture_device import list_mice, selected_serial, save_selection, DeviceError
 
 try:
     import gi
@@ -49,6 +50,8 @@ class Preferences(Gtk.Application):
         self.window = None
         self.mouse_settings = None
         self._setup_busy = False
+        self._mice = []
+        self._device_refreshing = False
 
     def do_activate(self):
         if self.window is not None:
@@ -76,6 +79,16 @@ class Preferences(Gtk.Application):
         self._text(page, 'Make your mouse feel like a touchpad', 'title-1')
         self._text(page, 'Hold the Logitech gesture button and move the mouse. '
                    'Your regular pointer stays unchanged outside gesture mode.', 'dim-label')
+
+        mouse_section = self._section(page, 'Connected mouse',
+                                     'Choose the Logitech mouse to use for gestures.')
+        self.mouse_choice = Gtk.DropDown.new_from_strings(['Searching for mice…'])
+        self.mouse_choice.set_sensitive(False)
+        self._row(mouse_section, 'Mouse', 'Select by stable Solaar device serial.',
+                  self.mouse_choice)
+        self.refresh_button = Gtk.Button(label='Refresh connected mice')
+        self.refresh_button.connect('clicked', self._refresh_mice)
+        mouse_section.append(self.refresh_button)
 
         gestures = self._section(page, 'Touchpad gesture',
                                  'These settings affect GNOME workspace and Overview swipes.')
@@ -150,6 +163,7 @@ class Preferences(Gtk.Application):
         self._load_values(read_settings())
         self._refresh_service()
         self.window.present()
+        GLib.idle_add(self._refresh_mice)
         # On first launch, configure and start automatically in the user session.
         if needs_initial_setup() and not service_active():
             GLib.idle_add(self._begin_setup)
@@ -226,11 +240,53 @@ class Preferences(Gtk.Application):
     def _refresh_service(self):
         self.daemon_button.set_label('Stop gestures' if service_active() else 'Start gestures')
 
+    def _refresh_mice(self, *_args):
+        if self._device_refreshing:
+            return False
+        self._device_refreshing = True
+        self.refresh_button.set_sensitive(False)
+
+        def worker():
+            try:
+                mice, error = list_mice(), ''
+            except (OSError, RuntimeError) as exc:
+                mice, error = [], str(exc)
+            GLib.idle_add(self._mice_refreshed, mice, error)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return False
+
+    def _mice_refreshed(self, mice, error):
+        self._device_refreshing = False
+        self.refresh_button.set_sensitive(True)
+        self._mice = mice
+        names = ['Select a mouse…'] + [m.label for m in mice] if mice else ['No connected MX Master']
+        self.mouse_choice.set_model(Gtk.StringList.new(names))
+        self.mouse_choice.set_sensitive(bool(mice))
+        saved = selected_serial()
+        index = next((i+1 for i, m in enumerate(mice) if m.serial == saved), 0)
+        if not saved and len(mice) == 1:
+            index = 1
+        self.mouse_choice.set_selected(index)
+        if error:
+            self.status.set_text('Mouse discovery: ' + error[:150])
+        elif not mice:
+            self.status.set_text('No connected MX Master found; check Solaar and refresh.')
+        return False
+
+    def _selected_mouse_serial(self):
+        index = self.mouse_choice.get_selected()
+        return self._mice[index-1].serial if 0 < index <= len(self._mice) else None
+
     def _repair(self, *_args):
         self._begin_setup()
 
     def _begin_setup(self):
         if self._setup_busy:
+            return False
+        serial = self._selected_mouse_serial()
+        if self._mice and not serial and len(self._mice) > 1:
+            self.status.set_text('Select a mouse before starting gestures.')
             return False
         self._setup_busy = True
         self.daemon_button.set_sensitive(False)
@@ -240,7 +296,7 @@ class Preferences(Gtk.Application):
 
         def worker():
             try:
-                message = setup_and_start()
+                message = setup_and_start(serial)
             except (OSError, RuntimeError) as exc:
                 message = 'Connection setup failed: ' + str(exc)
             GLib.idle_add(self._setup_finished, message)
@@ -262,7 +318,7 @@ class Preferences(Gtk.Application):
             self._begin_setup()
             return
         try:
-            service_action('stop')
+            stop_gestures()
             self.status.set_text('Gestures stopped.')
         except RuntimeError as exc:
             self.status.set_text(str(exc))
@@ -278,13 +334,20 @@ class Preferences(Gtk.Application):
         )
         try:
             write_settings(settings)
+            chosen_serial = self._selected_mouse_serial()
+            new_device = bool(chosen_serial and chosen_serial != selected_serial())
+            if new_device:
+                save_selection(chosen_serial)
             if self.mouse_settings:
                 new_pointer = self.pointer.get_value()
                 if abs(self.mouse_settings.get_double('speed') - new_pointer) >= 0.005:
                     self.mouse_settings.set_double('speed', new_pointer)
             if service_active():
-                service_action('restart')
-                self.status.set_text('Settings saved and gestures restarted.')
+                if new_device:
+                    self._begin_setup()
+                else:
+                    service_action('restart')
+                    self.status.set_text('Settings saved and gestures restarted.')
             else:
                 self.status.set_text('Settings saved. Start gestures to use them.')
         except (OSError, ValueError, RuntimeError, GLib.Error) as exc:
