@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Native GNOME/GTK 4 preferences for MX Touchpad Gestures.
+"""GNOME-native libadwaita preferences for MX Touchpad Gestures.
 
+All gesture and Solaar configuration remains in the existing backend modules.
 License: AGPL-3.0-only.
 """
 
@@ -8,19 +9,20 @@ import subprocess
 import sys
 import threading
 
-# Shared configuration lives with package data; source checkouts import locally.
+# Package data is installed in /usr/lib, while checkouts import locally.
 if __file__.startswith('/usr/bin/'):
     sys.path.insert(0, '/usr/lib/mx-touchpad-gestures')
 from mxmaster3_gesture_config import GestureSettings, read_settings, write_settings
 from mxmaster3_gesture_setup import setup_and_start, needs_initial_setup, stop_gestures
-from mxmaster3_gesture_device import list_mice, selected_serial, save_selection, DeviceError
+from mxmaster3_gesture_device import list_mice, selected_serial, save_selection
 
 try:
     import gi
     gi.require_version('Gtk', '4.0')
-    from gi.repository import Gio, Gtk, GLib
+    gi.require_version('Adw', '1')
+    from gi.repository import Adw, Gio, Gtk, GLib
 except (ImportError, ValueError) as exc:
-    sys.exit(f'MX Touchpad Gestures Settings requires python-gobject and gtk4: {exc}')
+    sys.exit(f'MX Touchpad Gestures Settings requires libadwaita and GTK 4: {exc}')
 
 SERVICE = 'mxmaster3-gestures.service'
 
@@ -43,180 +45,184 @@ def service_action(action):
         raise RuntimeError((result.stderr or f'Unable to {action} service').strip()[:240])
 
 
-class Preferences(Gtk.Application):
+class Preferences(Adw.Application):
+    """Adaptive libadwaita preferences with persistent, nonblocking actions."""
+
     def __init__(self):
         super().__init__(application_id='io.github.johnniePM.MXTouchpadGestures.Settings',
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.window = None
         self.mouse_settings = None
         self._setup_busy = False
-        self._mice = []
         self._device_refreshing = False
+        self._mice = []
 
     def do_activate(self):
         if self.window is not None:
             self.window.present()
             return
-        self.window = Gtk.ApplicationWindow(application=self)
+
+        self.window = Adw.ApplicationWindow(application=self)
         self.window.set_title('MX Touchpad Gestures')
-        self.window.set_default_size(680, 720)
-        self.window.set_size_request(440, 520)
-        header = Gtk.HeaderBar()
-        self.window.set_titlebar(header)
+        self.window.set_default_size(680, 730)
+        self.window.set_size_request(400, 480)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.window.set_child(outer)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_vexpand(True)
-        outer.append(scroll)
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22)
-        page.set_margin_top(28)
-        page.set_margin_bottom(28)
-        page.set_margin_start(28)
-        page.set_margin_end(28)
-        scroll.set_child(page)
+        self.toasts = Adw.ToastOverlay()
+        self.window.set_content(self.toasts)
 
-        self._text(page, 'Make your mouse feel like a touchpad', 'title-1')
-        self._text(page, 'Hold the Logitech gesture button and move the mouse. '
-                   'Your regular pointer stays unchanged outside gesture mode.', 'dim-label')
+        toolbar = Adw.ToolbarView()
+        self.toasts.set_child(toolbar)
 
-        mouse_section = self._section(page, 'Connected mouse',
-                                     'Choose the Logitech mouse to use for gestures.')
-        self.mouse_choice = Gtk.DropDown.new_from_strings(['Searching for mice…'])
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle.new('MX Touchpad Gestures',
+                                                    'Preferences'))
+        toolbar.add_top_bar(header)
+
+        page = Adw.PreferencesPage()
+        toolbar.set_content(page)
+
+        device_group = self._group(page, 'Connected mouse',
+                                   'Choose the Logitech mouse to use for gestures.')
+        self.mouse_choice = Adw.ComboRow()
+        self.mouse_choice.set_title('Mouse')
+        self.mouse_choice.set_subtitle('Identified by serial number or Unit ID')
+        self.mouse_choice.set_model(Gtk.StringList.new(['Searching for mice…']))
         self.mouse_choice.set_sensitive(False)
-        self._row(mouse_section, 'Mouse', 'Select by mouse serial number, or Unit ID when serial is unavailable.',
-                  self.mouse_choice)
-        self.refresh_button = Gtk.Button(label='Refresh connected mice')
+        device_group.add(self.mouse_choice)
+
+        refresh_row = Adw.ActionRow()
+        refresh_row.set_title('Refresh connected mice')
+        refresh_row.set_subtitle('Scan for paired or reconnected MX Master mice')
+        self.refresh_button = Gtk.Button.new_from_icon_name('view-refresh-symbolic')
+        self.refresh_button.set_valign(Gtk.Align.CENTER)
+        self.refresh_button.set_tooltip_text('Refresh connected mice')
+        self.refresh_button.add_css_class('flat')
         self.refresh_button.connect('clicked', self._refresh_mice)
-        mouse_section.append(self.refresh_button)
+        refresh_row.add_suffix(self.refresh_button)
+        refresh_row.set_activatable_widget(self.refresh_button)
+        device_group.add(refresh_row)
 
-        gestures = self._section(page, 'Touchpad gesture',
-                                 'These settings affect GNOME workspace and Overview swipes.')
-        self.fingers = Gtk.DropDown.new_from_strings(['Three fingers', 'Four fingers'])
-        self._row(gestures, 'Gesture fingers',
-                  'The number of virtual fingers GNOME receives during a swipe.', self.fingers)
-        self.gesture_speed = self._scale(0.25, 6.0, 0.05, 2)
-        self._row(gestures, 'Gesture speed',
-                  'How far a workspace swipe travels for each mouse movement.', self.gesture_speed,
-                  expand_control=True)
+        gesture_group = self._group(page, 'Touchpad gestures',
+                                    'Native GNOME workspace and Overview swipes')
+        self.fingers = Adw.ComboRow()
+        self.fingers.set_title('Fingers')
+        self.fingers.set_subtitle('Number of virtual fingers used for gestures')
+        self.fingers.set_model(Gtk.StringList.new(['Three fingers', 'Four fingers']))
+        gesture_group.add(self.fingers)
+        self.gesture_speed = self._slider(
+            gesture_group, 'Gesture speed', 'Distance traveled for each mouse movement',
+            .25, 6.0, .05, 2)
 
-        flick = self._section(page, 'Flick response',
-                              'Quick movements can cover more distance. GNOME still controls '
-                              'the release animation; there is no artificial movement afterward.')
-        self.flick_enabled = Gtk.Switch()
-        self._row(flick, 'Enable flick boost',
-                  'Accelerate quick movements; slow and reversible gestures stay precise.',
-                  self.flick_enabled)
-        self.boost = self._scale(0, 2.0, 0.05, 2)
-        self._row(flick, 'Flick strength',
-                  'Extra distance for fast movement, from none to 200%.', self.boost, True)
-        self.threshold = self._scale(150, 2000, 50, 0)
-        self._row(flick, 'Flick activation speed',
-                  'Lower values make even shorter, quicker movements count as a flick.',
-                  self.threshold, True)
+        flick_group = self._group(page, 'Flick response',
+                                  'Boost fast movements while retaining reversible control')
+        self.flick_enabled = Adw.SwitchRow()
+        self.flick_enabled.set_title('Flick boost')
+        self.flick_enabled.set_subtitle('Accelerate quick gestures')
+        flick_group.add(self.flick_enabled)
+        self.boost = self._slider(flick_group, 'Flick strength',
+                                  'Additional distance during fast movements',
+                                  0, 2.0, .05, 2)
+        self.threshold = self._slider(flick_group, 'Activation speed',
+                                      'How quickly you must move to trigger a flick',
+                                      150, 2000, 50, 0)
         self.flick_enabled.connect('notify::active', self._update_flick_controls)
 
-        pointer = self._section(page, 'GNOME mouse pointer',
-                                'This controls the normal mouse pointer across GNOME applications, '
-                                'not just during gestures.')
-        self.pointer = self._scale(-1.0, 1.0, 0.05, 2)
-        self._row(pointer, 'Pointer speed',
-                  'Uses GNOME’s own system mouse-speed setting.', self.pointer, True)
+        pointer_group = self._group(page, 'GNOME mouse pointer',
+                                    'Applies to normal pointer movement throughout GNOME')
+        self.pointer = self._slider(pointer_group, 'Pointer speed',
+                                    'Uses the system mouse-speed preference',
+                                    -1.0, 1.0, .05, 2)
         try:
             self.mouse_settings = Gio.Settings.new('org.gnome.desktop.peripherals.mouse')
             self.pointer.set_value(self.mouse_settings.get_double('speed'))
         except (GLib.Error, ValueError):
             self.pointer.set_sensitive(False)
-            self._text(pointer, 'GNOME mouse settings are unavailable in this session.', 'dim-label')
+            self.pointer_row.set_subtitle('GNOME mouse settings are unavailable')
 
-        footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        footer.set_margin_start(26)
-        footer.set_margin_end(26)
-        footer.set_margin_top(12)
-        footer.set_margin_bottom(22)
-        outer.append(Gtk.Separator())
-        outer.append(footer)
-        self.status = Gtk.Label(label='')
-        self.status.set_xalign(0)
-        self.status.set_wrap(True)
-        footer.append(self.status)
-        self.repair_button = Gtk.Button(label='Repair Solaar connection')
-        self.repair_button.set_tooltip_text('Reinstall the button rules, set diversion and start the driver')
-        self.repair_button.connect('clicked', self._repair)
-        footer.append(self.repair_button)
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        footer.append(actions)
-        self.daemon_button = Gtk.Button(label='')
+        connection_group = self._group(page, 'Connection',
+                                       'Manage the gesture service and Solaar integration')
+        self.service_row = Adw.ActionRow()
+        self.service_row.set_title('Gestures')
+        self.service_row.set_subtitle('Checking service…')
+        self.daemon_button = Gtk.Button(label='Start')
+        self.daemon_button.set_valign(Gtk.Align.CENTER)
         self.daemon_button.connect('clicked', self._toggle_service)
-        actions.append(self.daemon_button)
+        self.service_row.add_suffix(self.daemon_button)
+        self.service_row.set_activatable_widget(self.daemon_button)
+        connection_group.add(self.service_row)
+
+        repair_row = Adw.ActionRow()
+        repair_row.set_title('Solaar connection')
+        repair_row.set_subtitle('Restore thumb-button diversion and reconnect the driver')
+        self.repair_button = Gtk.Button(label='Repair')
+        self.repair_button.set_valign(Gtk.Align.CENTER)
+        self.repair_button.connect('clicked', self._repair)
+        repair_row.add_suffix(self.repair_button)
+        repair_row.set_activatable_widget(self.repair_button)
+        connection_group.add(repair_row)
+
+        self.status_row = Adw.ActionRow()
+        self.status_row.set_title('Status')
+        self.status_row.set_subtitle('Ready')
+        self.status_row.set_subtitle_lines(3)
+        connection_group.add(self.status_row)
+
+        bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        bottom.add_css_class('toolbar')
+        bottom.set_margin_start(12)
+        bottom.set_margin_end(12)
+        bottom.set_margin_top(6)
+        bottom.set_margin_bottom(6)
+        self.reset_button = Gtk.Button(label='Restore Defaults')
+        self.reset_button.connect('clicked', self._restore_defaults)
+        bottom.append(self.reset_button)
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
-        actions.append(spacer)
-        reset = Gtk.Button(label='Restore defaults')
-        reset.connect('clicked', self._restore_defaults)
-        actions.append(reset)
-        apply = Gtk.Button(label='Save and apply')
-        apply.add_css_class('suggested-action')
-        apply.connect('clicked', self._apply)
-        actions.append(apply)
+        bottom.append(spacer)
+        self.apply_button = Gtk.Button(label='Apply Changes')
+        self.apply_button.add_css_class('suggested-action')
+        self.apply_button.connect('clicked', self._apply)
+        bottom.append(self.apply_button)
+        toolbar.add_bottom_bar(bottom)
 
         self._load_values(read_settings())
         self._refresh_service()
         self.window.present()
         GLib.idle_add(self._refresh_mice)
-        # On first launch, configure and start automatically in the user session.
         if needs_initial_setup() and not service_active():
             GLib.idle_add(self._begin_setup)
 
     @staticmethod
-    def _text(container, value, style=None):
-        label = Gtk.Label(label=value, xalign=0)
-        label.set_wrap(True)
-        if style:
-            label.add_css_class(style)
-        container.append(label)
-        return label
+    def _group(page, title, description):
+        group = Adw.PreferencesGroup()
+        group.set_title(title)
+        group.set_description(description)
+        page.add(group)
+        return group
 
-    def _section(self, page, title, subtitle):
-        group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        page.append(group)
-        self._text(group, title, 'heading')
-        self._text(group, subtitle, 'dim-label')
-        frame = Gtk.Frame()
-        frame.set_child(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1))
-        group.append(frame)
-        return frame.get_child()
+    def _slider(self, group, title, description, minimum, maximum, step, digits):
+        row = Adw.ActionRow()
+        row.set_title(title)
+        row.set_subtitle(description)
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, minimum,
+                                          maximum, step)
+        scale.set_digits(digits)
+        scale.set_draw_value(True)
+        scale.set_value_pos(Gtk.PositionType.RIGHT)
+        scale.set_size_request(190, -1)
+        scale.set_valign(Gtk.Align.CENTER)
+        scale.set_tooltip_text(description)
+        row.add_suffix(scale)
+        group.add(row)
+        if title == 'Pointer speed':
+            self.pointer_row = row
+        return scale
 
-    def _row(self, group, title, description, control, expand_control=False):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
-        row.set_margin_start(16)
-        row.set_margin_end(16)
-        row.set_margin_top(13)
-        row.set_margin_bottom(13)
-        group.append(row)
-        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        labels.set_hexpand(not expand_control)
-        row.append(labels)
-        label = self._text(labels, title)
-        label.add_css_class('body')
-        subtitle = self._text(labels, description, 'dim-label')
-        subtitle.add_css_class('caption')
-        if expand_control:
-            control.set_hexpand(True)
-            control.set_size_request(210, -1)
-        else:
-            control.set_valign(Gtk.Align.CENTER)
-        row.append(control)
-        control.set_tooltip_text(description)
-        group.append(Gtk.Separator())
-
-    @staticmethod
-    def _scale(low, high, step, digits):
-        slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, low, high, step)
-        slider.set_digits(digits)
-        slider.set_draw_value(True)
-        slider.set_value_pos(Gtk.PositionType.RIGHT)
-        return slider
+    def _notice(self, message, error=False):
+        # Keep failures visible; ephemeral toasts are only for success messages.
+        self.status_row.set_subtitle(message[:280])
+        if not error:
+            self.toasts.add_toast(Adw.Toast.new(message[:140]))
 
     def _load_values(self, settings):
         self.fingers.set_selected(settings.fingers - 3)
@@ -235,96 +241,107 @@ class Preferences(Gtk.Application):
         self._load_values(GestureSettings())
         if self.mouse_settings:
             self.pointer.set_value(0.0)
-        self.status.set_text('Defaults selected. Select Save and apply to keep them.')
+        self.status_row.set_subtitle('Defaults selected; select Apply Changes to save')
 
     def _refresh_service(self):
-        self.daemon_button.set_label('Stop gestures' if service_active() else 'Start gestures')
+        active = service_active()
+        self.daemon_button.set_label('Stop' if active else 'Start')
+        self.service_row.set_subtitle('Running' if active else 'Stopped')
 
     def _refresh_mice(self, *_args):
         if self._device_refreshing:
             return False
         self._device_refreshing = True
         self.refresh_button.set_sensitive(False)
+        current_selection = self._selected_mouse_serial()
 
         def worker():
             try:
                 mice, error = list_mice(), ''
             except (OSError, RuntimeError) as exc:
                 mice, error = [], str(exc)
-            GLib.idle_add(self._mice_refreshed, mice, error)
+            GLib.idle_add(self._mice_refreshed, mice, error, current_selection)
 
         threading.Thread(target=worker, daemon=True).start()
         return False
 
-    def _mice_refreshed(self, mice, error):
+    def _mice_refreshed(self, mice, error, current_selection):
         self._device_refreshing = False
         self.refresh_button.set_sensitive(True)
         self._mice = mice
-        names = ['Select a mouse…'] + [m.label for m in mice] if mice else ['No connected MX Master']
-        self.mouse_choice.set_model(Gtk.StringList.new(names))
+        choices = (['Select a mouse…'] + [m.label for m in mice]
+                   if mice else ['No connected MX Master'])
+        self.mouse_choice.set_model(Gtk.StringList.new(choices))
         self.mouse_choice.set_sensitive(bool(mice))
-        saved = selected_serial()
-        index = next((i+1 for i, m in enumerate(mice) if m.serial == saved), 0)
-        if not saved and len(mice) == 1:
+        preferred = current_selection or selected_serial()
+        index = next((i + 1 for i, mouse in enumerate(mice)
+                      if mouse.serial == preferred), 0)
+        if not preferred and len(mice) == 1:
             index = 1
         self.mouse_choice.set_selected(index)
         if error:
-            self.status.set_text('Mouse discovery: ' + error[:150])
+            self._notice('Mouse discovery: ' + error[:180], error=True)
         elif not mice:
-            self.status.set_text('No connected MX Master found; check Solaar and refresh.')
+            self.status_row.set_subtitle('No MX Master found; check Solaar and refresh')
         return False
 
     def _selected_mouse_serial(self):
         index = self.mouse_choice.get_selected()
-        return self._mice[index-1].serial if 0 < index <= len(self._mice) else None
+        return self._mice[index - 1].serial if 0 < index <= len(self._mice) else None
+
+    def _run_async(self, work, busy_message):
+        if self._setup_busy:
+            return False
+        self._setup_busy = True
+        self.daemon_button.set_sensitive(False)
+        self.repair_button.set_sensitive(False)
+        self.apply_button.set_sensitive(False)
+        self.status_row.set_subtitle(busy_message)
+        self.hold()
+
+        def worker():
+            try:
+                message = work()
+                failure = False
+            except (OSError, RuntimeError) as exc:
+                message = 'Connection failed: ' + str(exc)
+                failure = True
+            GLib.idle_add(self._async_finished, message, failure)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return False
+
+    def _async_finished(self, message, failure):
+        self._setup_busy = False
+        self.daemon_button.set_sensitive(True)
+        self.repair_button.set_sensitive(True)
+        self.apply_button.set_sensitive(True)
+        self._notice(message, error=failure)
+        self._refresh_service()
+        self.release()
+        return False
 
     def _repair(self, *_args):
         self._begin_setup()
 
     def _begin_setup(self):
-        if self._setup_busy:
-            return False
         serial = self._selected_mouse_serial()
         if self._mice and not serial and len(self._mice) > 1:
-            self.status.set_text('Select a mouse before starting gestures.')
+            self._notice('Select a mouse before starting gestures', error=True)
             return False
-        self._setup_busy = True
-        self.daemon_button.set_sensitive(False)
-        self.repair_button.set_sensitive(False)
-        self.status.set_text('Connecting Solaar and starting gestures…')
-        self.hold()
-
-        def worker():
-            try:
-                message = setup_and_start(serial)
-            except (OSError, RuntimeError) as exc:
-                message = 'Connection setup failed: ' + str(exc)
-            GLib.idle_add(self._setup_finished, message)
-
-        threading.Thread(target=worker, daemon=True).start()
-        return False
-
-    def _setup_finished(self, message):
-        self._setup_busy = False
-        self.daemon_button.set_sensitive(True)
-        self.repair_button.set_sensitive(True)
-        self.status.set_text(message)
-        self._refresh_service()
-        self.release()
-        return False
+        return self._run_async(lambda: setup_and_start(serial),
+                               'Connecting Solaar and starting gestures…')
 
     def _toggle_service(self, *_args):
         if not service_active():
             self._begin_setup()
-            return
-        try:
-            stop_gestures()
-            self.status.set_text('Gestures stopped.')
-        except RuntimeError as exc:
-            self.status.set_text(str(exc))
-        self._refresh_service()
+        else:
+            self._run_async(lambda: (stop_gestures() or 'Gestures stopped'),
+                            'Stopping gestures…')
 
     def _apply(self, *_args):
+        if self._setup_busy:
+            return
         settings = GestureSettings(
             sensitivity=round(self.gesture_speed.get_value(), 2),
             fingers=3 + self.fingers.get_selected(),
@@ -334,24 +351,25 @@ class Preferences(Gtk.Application):
         )
         try:
             write_settings(settings)
-            chosen_serial = self._selected_mouse_serial()
-            new_device = bool(chosen_serial and chosen_serial != selected_serial())
+            selected = self._selected_mouse_serial()
+            new_device = bool(selected and selected != selected_serial())
             if new_device:
-                save_selection(chosen_serial)
+                save_selection(selected)
             if self.mouse_settings:
-                new_pointer = self.pointer.get_value()
-                if abs(self.mouse_settings.get_double('speed') - new_pointer) >= 0.005:
-                    self.mouse_settings.set_double('speed', new_pointer)
+                pointer = self.pointer.get_value()
+                if abs(self.mouse_settings.get_double('speed') - pointer) >= .005:
+                    self.mouse_settings.set_double('speed', pointer)
             if service_active():
                 if new_device:
                     self._begin_setup()
                 else:
-                    service_action('restart')
-                    self.status.set_text('Settings saved and gestures restarted.')
+                    self._run_async(
+                        lambda: (service_action('restart') or 'Settings applied'),
+                        'Restarting gestures…')
             else:
-                self.status.set_text('Settings saved. Start gestures to use them.')
+                self._notice('Preferences saved; start gestures to apply them')
         except (OSError, ValueError, RuntimeError, GLib.Error) as exc:
-            self.status.set_text('Could not apply settings: ' + str(exc))
+            self._notice('Could not save preferences: ' + str(exc), error=True)
         self._refresh_service()
 
 
