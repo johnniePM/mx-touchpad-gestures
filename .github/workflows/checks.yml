@@ -17,3 +17,13 @@ jobs:
         run: |
           bash -n PKGBUILD mx-touchpad-gestures.install mxmaster3-gestures-setup
           cc -std=c11 -Wall -Wextra -Werror -o /tmp/mxmaster3-gesture-signal fast_signal.c
+      - name: Install GNOME UI test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb dbus-x11 gsettings-desktop-schemas
+      - name: Smoke-test native libadwaita window
+        env:
+          GDK_BACKEND: x11
+          GSETTINGS_BACKEND: memory
+          GSK_RENDERER: cairo
+        run: dbus-run-session -- xvfb-run -a /usr/bin/python3 -m unittest -q test_ui.py
