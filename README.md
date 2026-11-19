@@ -2,7 +2,7 @@
 
 Native **GNOME Wayland** touchpad swipes using a Logitech MX Master 3 / MX Master 3S thumb gesture button. Hold the button and move the mouse to navigate workspaces or open the Overview. Swipes follow your movement continuously, including reversing direction before release. Outside gesture mode the mouse behaves normally.
 
-The application includes a graphical **Settings** window for gesture speed, three- or four-finger swipes, flick acceleration, and the GNOME mouse pointer speed. It uses real Linux multitouch input rather than keyboard shortcuts, so GNOME handles the gestures consistently across the desktop. This does **not** add GNOME gestures to other desktop environments such as KDE.
+The application has a native **GNOME libadwaita Settings window** for gesture speed, three- or four-finger swipes, flick acceleration, and pointer speed. It uses Adwaita preference groups, adaptive toolbars, and GNOME's light/dark appearance and accent styling. It uses real Linux multitouch input rather than keyboard shortcuts, so GNOME handles the gestures consistently across the desktop. This does **not** add GNOME gestures to other desktop environments such as KDE.
 
 ## Install on Arch Linux
 
@@ -88,12 +88,13 @@ Personal configuration remains untouched by pacman removal.
 - A virtual `uinput` touchpad emits Linux type-B multitouch frames for 3 or 4 contacts; GNOME's compositor controls workspace movement and final animations.
 - Flick boost is velocity-sensitive amplification during the swipe, not a separate simulated pointer gesture or a background inertial cursor.
 - The native C Solaar helper sends press/release signals over a private Unix socket, avoiding Python interpreter startup on every press.
-- The GUI uses GTK 4 / PyGObject and GNOME GSettings. Per-user configuration is atomically updated without overwriting unrelated device settings.
+- The GUI uses GTK 4, libadwaita, PyGObject, and GNOME GSettings. It follows the desktop's appearance settings without custom theme CSS. Per-user configuration is atomically updated without overwriting unrelated device settings.
 
 Development checks:
 
 ```bash
 python3 -m unittest -q test_gestures.py test_setup.py
+# Graphical UI check: xvfb-run -a /usr/bin/python3 -m unittest -q test_ui.py
 bash -n PKGBUILD mx-touchpad-gestures.install
 cc -std=c11 -Wall -Wextra -o /tmp/mxmaster3-gesture-signal fast_signal.c
 ```

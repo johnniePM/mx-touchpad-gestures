@@ -1,12 +1,12 @@
 # Maintainer: MX Touchpad Gestures contributors
 pkgname=mx-touchpad-gestures
-pkgver=0.7.1
+pkgver=0.7.2
 pkgrel=1
 pkgdesc='Configure native GNOME touchpad swipes with a Logitech MX Master 3 gesture button'
 arch=('x86_64')
 url='https://github.com/johnniePM/mx-touchpad-gestures'
 license=('AGPL-3.0-only')
-depends=('python' 'python-evdev' 'systemd' 'python-gobject' 'gtk4' 'gsettings-desktop-schemas' 'solaar')
+depends=('python' 'python-evdev' 'systemd' 'python-gobject' 'gtk4' 'libadwaita' 'gsettings-desktop-schemas' 'solaar')
 makedepends=('gcc')
 optdepends=('libnotify: desktop launcher notifications')
 install=mx-touchpad-gestures.install
@@ -28,6 +28,7 @@ source=(
   'mxmaster3-gestures-setup'
   'test_gestures.py'
   'test_setup.py'
+  'test_ui.py'
   'README.md'
   'LICENSE'
 )
@@ -36,7 +37,7 @@ sha256sums=(
   'cd78a0e20d245140c5dbe9e140ecc9a0cb1148b226aafe186160248f83909071'
   '75a7a82fa9f7b65424075808db10d8eaf77a08f662171508b11be146b47a98ed'
   'ce0968732329fe324bb055815482532539895e6e47da6080a93d58d97b79f1af'
-  'bae7822d140333d65edfd1728d986b269d65e36b2e86bdc8f5564a4b4fefb60a'
+  'f66d37be643eb38e75ac40579c950ab897055fcbffe06c6c26bc82e4e6b4c57a'
   '3d3d76ee7128672cf90b526434093f56f44c661fbe29860e566803b09c833219'
   '90d4a3f608005523aaefa456cbf98e267be88a81c519751bb4907a881a82371e'
   '09c4ec5c1d22092321d716a26cf47a6cb68be6d91bf4e6ec77da51afc9ed72c5'
@@ -48,7 +49,8 @@ sha256sums=(
   '08704ed1df538f522a2216207f19345cafffdd665481c05199ca1806b524c106'
   'c081dce3b31f5c365abcd77c3910cc922b04a64fc0317cf860f3db80cd161096'
   'aa2b167bc2363ef162399c63453132be1b7029a0449a70318434de5a96fb3041'
-  '8be1946db85bcfc0fd2fc6ff57d766520e465b0337353231e70b8bc4b12be574'
+  '5d683cef0bb0937c9fd3da6afc29f9ad75a8e1e355849363e0bdffbfc15464f5'
+  '730a3cb674cd09b48de32302ed285088210e11d4788ae4158d8c61a77069de7f'
   '8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef'
 )
 

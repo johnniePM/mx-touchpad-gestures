@@ -27,3 +27,20 @@ jobs:
           GSETTINGS_BACKEND: memory
           GSK_RENDERER: cairo
         run: dbus-run-session -- xvfb-run -a /usr/bin/python3 -m unittest -q test_ui.py
+      - name: Verify Arch package source checksums
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import re
+          pkg = Path('PKGBUILD').read_text()
+          sources = re.search(r"source=\((.*?)\)\s*sha256sums=", pkg, re.S).group(1)
+          sums = re.search(r"sha256sums=\((.*?)\)\s*build\(", pkg, re.S).group(1)
+          files = re.findall(r"'([^']+)'", sources)
+          digests = re.findall(r"'([a-f0-9]{64})'", sums)
+          assert len(files) == len(digests) and len(files) == len(set(files)), "Package file list mismatch"
+          for path, digest in zip(files, digests):
+              actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+              assert digest == actual, f"Wrong checksum for {path}"
+          print(f"Verified {len(files)} packaged source checksums")
+          PY
